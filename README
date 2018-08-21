@@ -6,3 +6,4 @@ You can install GSL by:
 - follow instructions in the INSTALL file; if you do not have root access, append --prefix=/path/to/dir during ./configure
 - to include GSL functions into your own code, make sure to link the library during compilation/in your makefile
  
+Plots of fits from maximum-likelihood solutions can be found in data/mlplots/
