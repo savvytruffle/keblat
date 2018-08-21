@@ -1,8 +1,0 @@
-Keblat simultaneously fits SED and Kepler lightcurve data given an eclipsing binary from the Villanova KEB catalogue. It utilizes Padova isochrones (stored in data/) and a fast Mandel & Agol code implemented in Python/C by L. Kreidberg (in c_code/ and ext_func/; compile with 'bash build.sh'). Requires the GNU Scientific Library (GSL) in C. 
-
-You can install GSL by:
-- download v2.1 here: ftp://ftp.gnu.org/gnu/gsl/gsl-2.1.tar.gz
-- untar into desired directory
-- follow instructions in the INSTALL file; if you do not have root access, append --prefix=/path/to/dir during ./configure
-- to include GSL functions into your own code, make sure to link the library during compilation/in your makefile
- 
