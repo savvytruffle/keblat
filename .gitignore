@@ -1,0 +1,16 @@
+JSAnimation/
+qats/
+data/isodata.dat.long
+data/makesedfile/
+k2/
+gsl/
+kics/
+condor*
+huber*
+premap*
+nessf*
+*.sh
+*.ipynb
+*.pyc
+*.so
+*~
