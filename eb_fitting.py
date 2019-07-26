@@ -62,13 +62,13 @@ def rez(fit_params, keblat, qcrow=None, polyorder=0, ooe=True):
         crowd_fits = keblat.crowd
     lcmod, lcpol = keblat.lcfit(guess[:13], keblat.jd[keblat.clip],
                                 keblat.quarter[keblat.clip], keblat.flux[keblat.clip],
-                                keblat.dflux[keblat.clip], crowd_fits[keblat.clip],
+                                keblat.fluxerr[keblat.clip], crowd_fits[keblat.clip],
                                 polyorder=polyorder, ooe=ooe)
     if np.any(np.isinf(lcmod)):
         return np.ones(np.sum(keblat.clip))*1e10#(1.-keblat.flux[keblat.clip])/keblat.dflux[keblat.clip]
     if keblat.pe_dur == 0 or keblat.se_dur == 0:
-        return (keblat.flux[keblat.clip] - lcmod) / keblat.dflux[keblat.clip]
-    return (keblat.flux[keblat.clip] - lcmod*lcpol)/keblat.dflux[keblat.clip]
+        return (keblat.flux[keblat.clip] - lcmod) / keblat.fluxerr[keblat.clip]
+    return (keblat.flux[keblat.clip] - lcmod*lcpol)/keblat.fluxerr[keblat.clip]
 
 def lnlike_rv(fisopars, keblat, residual=True):
     pars = get_pars2vals(fisopars, partype='rv')
@@ -83,9 +83,9 @@ def lnlike_rv(fisopars, keblat, residual=True):
         return res
     return np.sum(res**2)
 
-def lnlike_lcrv(fisopars, keblat, qua=[1], polyorder=2, residual=True):
+def lnlike_lcrv(fisopars, keblat, qua=[1], polyorder=2, residual=True, retro=False):
     pars = get_pars2vals(fisopars, partype='lcrv')
-    res = keblat.lnlike_lcrv(pars, qua=qua, polyorder=polyorder, residual=residual)
+    res = keblat.lnlike_lcrv(pars, qua=qua, polyorder=polyorder, residual=residual, retro=retro)
     if residual:
         if np.any(np.isinf(res)) or np.sum(np.isnan(res)) > 0.05 * len(res):
             return np.ones(np.sum(~keblat.bad1)+np.sum(~keblat.bad2) + np.sum(keblat.clip)) * 1e20
@@ -184,7 +184,10 @@ def opt_sed(keblat, **kwargs):
     ebv_dist = kwargs.pop('ebv_dist', None)
     vary_age = kwargs.pop('vary_age', True)
     vary_msum = kwargs.pop('vary_msum', True)
-    
+    vary_dist = kwargs.pop('vary_dist', True)
+    xtol = kwargs.pop('xtol', 1e-8)
+    ftol = kwargs.pop('ftol', 1e-8)
+
     keblat.updatepars(**kwargs)
     
     fit_params2 = Parameters()
@@ -200,12 +203,12 @@ def opt_sed(keblat, **kwargs):
     fit_params2['mrat'].vary=True
     fit_params2['z0'].vary=vary_z0
     fit_params2['age'].vary=vary_age
-    fit_params2['dist'].vary=True
+    fit_params2['dist'].vary=vary_dist
     fit_params2['ebv'].vary=fit_ebv
     kws = {'lc_constraints': lc_constraints, 'residual': True, 
            'ebv_arr': ebv_arr, 'ebv_dist': ebv_dist}
 
-    fit_kws={'maxfev':2000*(len(fit_params2)+1)}
+    fit_kws={'maxfev':2000*(len(fit_params2)+1), 'xtol':xtol, 'ftol':ftol}
     if len(keblat.magsobs)<6:
         fit_params2['ebv'].vary=False
 
@@ -213,7 +216,7 @@ def opt_sed(keblat, **kwargs):
     print "======================== Starting SED ONLY fit... ========================"
     print "=========================================================================="
 
-    result2 = minimize(keblat.ilnlike, fit_params2, kws=kws, iter_cb=MinimizeStopper(30), **fit_kws)
+    result2 = minimize(keblat.ilnlike, fit_params2, kws=kws, iter_cb=MinimizeStopper(60), **fit_kws)
     isores = keblat.ilnlike(result2.params, lc_constraints=lc_constraints, residual=True)
     redchi2 = np.sum(isores**2) / len(isores)
     print redchi2, result2.redchi
@@ -233,7 +236,7 @@ def opt_sed(keblat, **kwargs):
 
     niter=0
     while (redchi2>1.) and (niter<3):
-        result2 = minimize(keblat.ilnlike, fit_params2, kws=kws, iter_cb=MinimizeStopper(30), **fit_kws)
+        result2 = minimize(keblat.ilnlike, fit_params2, kws=kws, iter_cb=MinimizeStopper(60), **fit_kws)
         #redchi2_0 = keblat.ilnlike(result2.params, lc_constraints=lc_constraints)
         isores = keblat.ilnlike(result2.params, lc_constraints=lc_constraints, residual=True)
         current_redchi2 = np.sum(isores**2) / len(isores)
@@ -499,6 +502,8 @@ def opt_lc(keblat, **kwargs):
     #set_upperb = kwargs.pop('set_upperb', 2.0)
     vary_msum = kwargs.pop('vary_msum', True)
     fit_crowd = kwargs.pop('fit_crowd', False)
+    vary_timing = kwargs.pop('vary_timing', True)
+    vary_frat = kwargs.pop('vary_frat', True)
     try:
         crowd_pars = kwargs.pop('crowd_pars')
     except:
@@ -530,12 +535,12 @@ def opt_lc(keblat, **kwargs):
     fit_params['rrat'].vary=True
     fit_params['rsum'].vary=True
     fit_params['b'].vary=True
-    fit_params['frat'].vary=True
+    fit_params['frat'].vary=vary_frat
     fit_params['esinw'].vary=True
     fit_params['ecosw'].vary=True
-    fit_params['tpe'].vary=True
+    fit_params['tpe'].vary=vary_timing
 
-    fit_kws={'maxfev':100*(len(fit_params)+1)}
+    fit_kws={'maxfev':2000*(len(fit_params)+1)}
     if fit_crowd:
         print "Fitting crowding parameters..."
 #        for ii in fit_params.keys():
@@ -588,10 +593,10 @@ def opt_lc(keblat, **kwargs):
                           keblat, polyorder=1))**2) / np.sum(keblat.clip)
 
     fit_params['msum'].vary=vary_msum
-    fit_params['tpe'].vary=True
-    fit_params['period'].vary=True
+    fit_params['tpe'].vary=vary_timing
+    fit_params['period'].vary=vary_timing
     fit_params['b'].vary=True
-    fit_params['frat'].vary=True
+    fit_params['frat'].vary=vary_frat
     fit_params['esinw'].vary=True
     fit_params['ecosw'].vary=True
     fit_params['rsum'].vary=True
@@ -742,6 +747,7 @@ def opt_sedlc(keblat, **kwargs):
     lc_constraints = kwargs.pop('lc_constraints', False)
     freeze_iso = kwargs.pop('freeze_iso', False)
     vary_ephem = kwargs.pop('vary_ephem', True)
+    vary_dist = kwargs.pop('vary_dist', False)
     #isonames = ['m1', 'm2', 'z0', 'age', 'dist', 'ebv', 'h0', 'isoerr']
 
     fit_params = Parameters()
@@ -793,7 +799,7 @@ def opt_sedlc(keblat, **kwargs):
     if init_varyza:
         fit_params['z0'].vary=False
         fit_params['age'].vary=False
-
+    fit_params['dist'].vary=vary_dist
     if freeze_iso:
         fit_params['msum'].vary=False
         fit_params['mrat'].vary=False
@@ -862,6 +868,71 @@ def opt_sedlc(keblat, **kwargs):
             report_fit(result3)
             fit_params = result3.params.copy()
             redchi2 = current_redchi2
+        niter+=1
+    #print "logL of best allpars = ", keblat.lnlike(allpars, lc_constraints=None, qua=np.unique(keblat.quarter), polyorder=2)
+    allpars = get_pars2vals(fit_params, partype='lcsed')
+    #print fit_params
+    return allpars
+
+
+def opt_sedlc_fix1par(keblat, **kwargs):
+    init_porder = kwargs.pop('init_porder', 2)
+    lc_constraints = kwargs.pop('lc_constraints', None)
+    vary_timing = kwargs.pop('vary_timing',False)
+    par2fix = kwargs.pop('par2fix', None)
+    niter_max = kwargs.pop('niter_max', 1)
+    xtol = kwargs.pop('xtol', 1e-8)
+    ftol = kwargs.pop('ftol', 1e-8)
+
+
+    fit_params = Parameters()
+
+    for name, val in kwargs.items():
+        if name in keblat.parbounds.keys():
+            if (name == 'isoerr') or (name == 'lcerr'):
+                fit_params.add(name, value=val, min=np.exp(keblat.parbounds[name][0]), 
+                           max=np.exp(keblat.parbounds[name][1]), vary=False)
+                print fit_params[name]
+            else:
+                fit_params.add(name, value=val, min=keblat.parbounds[name][0], 
+                           max=keblat.parbounds[name][1], vary=True)
+        else:
+            fit_params.add(name, value=val, vary=True)
+    fit_params['h0'].vary=False
+    fit_params['period'].vary=vary_timing
+    fit_params['tpe'].vary=vary_timing
+    kws = {'lc_constraints': lc_constraints,
+           'qua': np.unique(keblat.quarter), 'polyorder': init_porder, 
+           'residual': True, 'ebv_arr': None}
+    if par2fix is not None:
+        fit_params[par2fix].vary=False
+    fit_kws={'maxfev':2000*(len(fit_params)+1), 'xtol':xtol, 'ftol':ftol}
+
+    print "=========================================================================="
+    print "================= Starting SED + LC simultaneous fit... =================="
+    try:
+        print "=============== Fixing {}={} while all other pars fixed ==================".format(par2fix, fit_params[par2fix].value)
+    except:
+        print "================~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~===================" 
+    print "=========================================================================="
+
+    redchi2 = 1e25
+    niter=0
+    while (niter<niter_max): #(redchi2>1.) and (niter<10):
+        result3 = minimize(lnlike_lmfit, fit_params, args=(keblat, ), 
+                           kws=kws, iter_cb=MinimizeStopper(60), **fit_kws)
+#        print(result3.params)
+        _allres = lnlike_lmfit(result3.params, keblat, lc_constraints=lc_constraints, 
+                               qua=np.unique(keblat.quarter), polyorder=2, residual=True)
+        current_redchi2 = np.sum(_allres**2) / len(_allres)
+        print "Iteration: ", niter, current_redchi2, result3.redchi
+
+        if current_redchi2 < redchi2:
+            print "The following results are saved:"
+            report_fit(result3)
+            fit_params = result3.params.copy()
+#            print(result3.params, fit_params)
+            redchi2 = current_redchi2*1.0
         niter+=1
     #print "logL of best allpars = ", keblat.lnlike(allpars, lc_constraints=None, qua=np.unique(keblat.quarter), polyorder=2)
     allpars = get_pars2vals(fit_params, partype='lcsed')
@@ -1053,13 +1124,14 @@ def opt_lcrv(keblat, **kwargs):
     vary_tpe = kwargs.pop('vary_tpe', False)
     vary_period=kwargs.pop('vary_period', False)
     vary_err = kwargs.pop('vary_err', False)
+    retro = kwargs.pop('retro', False)
     fit_pars = Parameters()
     for name, val in kwargs.items():
         if name in keblat.parbounds.keys():
             fit_pars.add(name, value=val, min=keblat.parbounds[name][0], max=keblat.parbounds[name][1])
         else:
             fit_pars.add(name, value=val)
-    kws = {'qua': np.unique(keblat.quarter), 'polyorder': 2, 'residual': True}
+    kws = {'qua': np.unique(keblat.quarter), 'polyorder': 2, 'residual': True, 'retro': retro}
     fit_kws = {'maxfev': 2000 * (len(fit_pars) + 1)}
     fit_pars['lcerr'].vary=vary_err
     fit_pars['rverr'].vary=vary_err
@@ -1073,7 +1145,7 @@ def opt_lcrv(keblat, **kwargs):
                        kws=kws, iter_cb=MinimizeStopper(60), **fit_kws)
     fit_params = result3.params.copy()
     _allres = lnlike_lcrv(result3.params, keblat, qua=np.unique(keblat.quarter), 
-                          polyorder=2, residual=True)
+                          polyorder=2, residual=True, retro=retro)
     redchi2 = np.sum(_allres ** 2) / len(_allres)
     print redchi2, result3.redchi
     report_fit(result3)
@@ -1083,7 +1155,7 @@ def opt_lcrv(keblat, **kwargs):
         result3 = minimize(lnlike_lcrv, fit_params, args=(keblat, ), 
                            kws=kws, iter_cb=MinimizeStopper(60), **fit_kws)
         _allres = lnlike_lcrv(result3.params, keblat, qua=np.unique(keblat.quarter), 
-                              polyorder=2, residual=True)
+                              polyorder=2, residual=True, retro=retro)
         current_redchi2 = np.sum(_allres ** 2) / len(_allres)
         print "Iteration: ", niter, current_redchi2, result3.redchi
         if current_redchi2 < redchi2:
@@ -1503,63 +1575,31 @@ def get_ac_time(chains, ndim):
 #            print("Autocorrelation time couldn't be computed for {}".format(parnames_dict['lcsed'][ii]))
     return tau
 
-def plot_mc(filename, keblat, header, footer, nwalkers, ndim, niter, 
-            burnin=40000, plot=True, posteriors=False, huber_truths=[],
-            isonames=None, iso_extras=False, blob_names=None, acf=True, write_mc=False):
+def test_convergence(filename, keblat, header, footer, nwalkers, ndim, niter, 
+            burnin=None, isonames=None, blob_names=None, c=10.):
     iwalker = np.arange(nwalkers)
     data = np.loadtxt(filename)
     if data.shape[0]/nwalkers < niter/20:
         print "MC file not complete... returning the last ball of walkers (1, nwalkers, ndim)"
-#        return None, None, None, None, None, False
         return  None,  None, None, None, None, None, False
     afrac = np.empty((data.shape[0]/nwalkers, nwalkers))
-#    logli, r1, temp1, logg1 = afrac*0., afrac*0., afrac*0., afrac*0.
     logli = afrac*0.
     params = np.empty((data.shape[0]/nwalkers, nwalkers, len(isonames)))
     if blob_names is None:
         blob_names = ['r1', 'r2', 'frat'] + ['cr'+str(crq) for crq in np.unique(keblat.quarter)]
     blobs = np.empty((data.shape[0]/nwalkers, nwalkers, len(blob_names)))
-    strays = []
+#    strays = []
     for jj in iwalker:
         afrac[:,jj] = data[jj::nwalkers,2]
         logli[:,jj] = data[jj::nwalkers,3]
-#        r1[:,jj] = data[jj::nwalkers, 22]
-#        temp1[:,jj] = data[jj::nwalkers, 23]
-#        logg1[:,jj] = data[jj::nwalkers, 24]
         for ii in range(len(blob_names)):
             blobs[:,jj,ii] = data[jj::nwalkers,ii+4+len(isonames)]
-#        r1[:,jj] = data[jj::nwalkers,4]
-#        temp1[:,jj] = data[jj::nwalkers,5]
-#        logg1[:,jj] = data[jj::nwalkers,6]
-        if len(afrac[:,jj][(afrac[:,jj]<0.1)])>=0.66*len(afrac[:,jj]):
-            strays.append(jj)
+#        if len(afrac[:,jj][(afrac[:,jj]<0.1)])>=0.66*len(afrac[:,jj]):
+#            strays.append(jj)
 
         for ii in range(len(isonames)):
             params[:, jj, ii] = data[jj::nwalkers, ii+4]#7]
-    params0 = params.copy()
-    if plot:
-#        from mpl_toolkits.axes_grid1 import make_axes_locatable
-        print "Making plots now."
-        fig = plt.figure(figsize=(16, 16))
-        for ii in range(len(isonames)):
-            ax = fig.add_subplot(int(len(isonames)/2)+1, 2, ii+1)
-            ax.plot(params[:, :, ii])
-            ax.plot(np.nanmean(params[:,:,ii].T, axis=0), 'k-', lw=2, alpha=0.2)
-            ax.plot([burnin/10, burnin/10], plt.ylim(), 'y-', lw=2.0)
-            ax.set_xlabel('N/10 iteration')
-            ax.set_ylabel(isonames[ii])
-            divider = make_axes_locatable(ax)
-            axhist = divider.append_axes("right", size=1.2, pad=0.1, sharey=ax)
-            axhist.hist(params[:,:,ii], 100, histtype='step', alpha=0.6, normed=True,
-                        orientation='horizontal')
-            axhist.hist(params[:,:,ii].ravel(), 100, histtype='step', color='k',
-                        normed=True, orientation='horizontal')
-            plt.setp(axhist.get_yticklabels(), visible=False)
-        plt.savefig(header+footer+'_parameters.png')
-
-#    r1[np.isinf(r1)] = 0.
-#    temp1[np.isinf(temp1)] = 0.
-#    logg1[np.isinf(logg1)] = 0.
+#    params0 = params.copy()
 
     mostlike = np.where(logli == np.nanmax(logli))
     mlpars = params[:,:,:][mostlike][0]
@@ -1567,28 +1607,435 @@ def plot_mc(filename, keblat, header, footer, nwalkers, ndim, niter,
     print "Max likelihood out of all samples: ", logli[:,:][mostlike]
     for kk in range(len(isonames)):
         print("""{0} = {1}""".format(str(isonames[kk]), mlpars[kk]))
-    if burnin/10>=params.shape[0]:
-        print "Burn-in shorter than length of MCMC run, adjusting..."
-        burnin = params.shape[0]*3/4*10
-    afrac, logli = afrac[burnin/10:,:], logli[burnin/10:,:]
-#    r1, temp1, logg1 = r1[burnin/10:,:], temp1[burnin/10:,:], logg1[burnin/10:,:]
-    params = params[burnin/10:,:,:]
-    blobs = blobs[burnin/10:,:,:]
 
-    print "bad/stray walkers =", strays, len(strays)
+    if burnin is None:
+        print "Burn-in = when logli first crosses median value"
+        burnin = np.where(np.nanmedian(logli, axis=1) >= np.nanmean(logli))[0][0] * 2
 
+        
+    _, bad_walkers, walker_percentiles = get_stray_walkers(params, nwalkers, ndim, burnin=burnin/10)
+    strays = iwalker[bad_walkers>1]
+    print("{} bad/stray walkers = {}".format(len(strays), strays))
+    
     keep = iwalker[~np.in1d(iwalker, strays)]
     if len(strays)>=0.33*nwalkers:
         keep = iwalker
 
+    print "Making plots now."
+    fig = plt.figure(figsize=(16, 16))
+    for ii in range(len(isonames)):
+        ax = fig.add_subplot(int(len(isonames)/2)+1, 2, ii+1)
+        ax.plot(params[:, :, ii])
+        ax.plot(np.nanmean(params[:,:,ii].T, axis=0), 'k-', lw=2, alpha=0.2)
+        ax.plot([burnin, burnin], plt.ylim(), 'y-', lw=2.0)
+        ax.set_xlabel('N/10 iteration')
+        ax.set_ylabel(isonames[ii])
+        divider = make_axes_locatable(ax)
+        axhist = divider.append_axes("right", size=1.2, pad=0.1, sharey=ax)
+        axhist.hist(params[:,:,ii], 100, histtype='step', alpha=0.6, normed=True,
+                    orientation='horizontal')
+        axhist.hist(params[:,:,ii].ravel(), 100, histtype='step', color='k',
+                    normed=True, orientation='horizontal')
+        plt.setp(axhist.get_yticklabels(), visible=False)
+    ax = fig.add_subplot(int(len(isonames)/2)+1, 2, len(isonames)+1)
+    ax.plot(logli)
+    ax.axvline(burnin, color='y', lw=2.0)
+    ax.set_xlabel('N/10 iteration')
+    ax.set_ylabel('logL')
+    plt.savefig(header+footer+'_parameters.png')
+
+    tau = np.zeros((ndim))
+#    tau = np.zeros((ndim, nwalkers))
+
+    print "Making ACF plots now."
+    fig = plt.figure(figsize=(16, 16))
+    fig.subplots_adjust(hspace=0.0)
+    x = np.arange(params.shape[0])
+    for ii in range(ndim):
+        ax = fig.add_subplot(ndim/3+1, 3, ii+1)            
+
+        print("{}".format(isonames[ii]))
+        tau[ii], mean_of_acfs, acf = get_acf_tau(params[burnin:, keep, ii], c=c)
+        ax.plot(acf, alpha=0.5)
+        ax.plot(mean_of_acfs, 'k-', lw=1.5, alpha=0.8, label='mean(acfs)')
+        ax.axvline(tau[ii], ls='--', lw=1.5)
+        ax.text(tau[ii]*1.1, 0.8, '{}'.format(int(tau[ii])))
+        ax.plot(x, np.exp(-x/tau[ii]), '-', lw=1.5, alpha=0.8)
+        ax.set_xlabel('N/10 iteration lag')
+        ax.set_ylabel('{}'.format(isonames[ii]))
+        #plt.legend()
+
+    plt.suptitle("ACF")
+    plt.savefig(header+footer+'_ACF.png')
+    return bad_walkers, params, blobs, mlpars, tau, afrac, logli
+
+def tail(filename, n, ret_array=True):
+    stdin, stdout = os.popen2("tail -n {} {}".format(n, filename))
+    stdin.close()
+    lines = stdout.read().split()
+    stdout.close()
+    if ret_array:
+        return np.array(lines).astype(float).reshape((n, -1))
+    return lines
+
+def wc(filename):
+    stdin, stdout = os.popen2("wc -l {}".format(filename))
+    stdin.close()
+    lines = stdout.read().split()
+    stdout.close()
+    return int(lines[0])
+
+def plot_mc(filename, keblat, header, footer, nwalkers, ndim, niter, 
+            burnin=None, plot=True, posteriors=False, huber_truths=[],
+            isonames=None, iso_extras=False, blob_names=None, acf=True, write_mc=False,
+            c=10.):
+    iwalker = np.arange(nwalkers)
+    data = np.loadtxt(filename)
+    afrac = np.empty((data.shape[0]/nwalkers, nwalkers))
+    logli = afrac*0.
+    params = np.empty((data.shape[0]/nwalkers, nwalkers, len(isonames)))
+    if blob_names is None:
+        blob_names = ['r1', 'r2', 'frat'] + ['cr'+str(crq) for crq in np.unique(keblat.quarter)]
+    blobs = np.empty((data.shape[0]/nwalkers, nwalkers, len(blob_names)))
+#    strays = []
+    for jj in iwalker:
+        afrac[:,jj] = data[jj::nwalkers,2]
+        logli[:,jj] = data[jj::nwalkers,3]
+        for ii in range(len(blob_names)):
+            blobs[:,jj,ii] = data[jj::nwalkers,ii+4+len(isonames)]
+#        if len(afrac[:,jj][(afrac[:,jj]<0.1)])>=0.66*len(afrac[:,jj]):
+#            strays.append(jj)
+
+        for ii in range(len(isonames)):
+            params[:, jj, ii] = data[jj::nwalkers, ii+4]#7]
+#    params0 = params.copy()
+
+    mostlike = np.where(logli == np.nanmax(logli))
+    mlpars = params[:,:,:][mostlike][0]
+    mlcrowd = blobs[:,:,:][mostlike][0]
+    print "Max likelihood out of all samples: ", logli[:,:][mostlike]
+    for kk in range(len(isonames)):
+        print("""{0} = {1}""".format(str(isonames[kk]), mlpars[kk]))
+    if burnin is None:
+        _cross_ind = np.where(np.nanmedian(logli, axis=1) >= np.nanmean(logli))[0]
+        if len(_cross_ind) == 0:
+            _cross_ind = 0
+        else:
+            _cross_ind = _cross_ind[0]
+        burnin = min(max(_cross_ind * 5, params.shape[0]/5), params.shape[0]/2)
+    print "Burn-in = {}".format(burnin)
+
+    _, bad_walkers, walker_percentiles = get_stray_walkers(params, nwalkers, ndim, burnin=burnin)
+    strays = iwalker[bad_walkers>1]
+    print("{} bad/stray walkers = {}".format(len(strays), strays))
+    
+    keep = iwalker[~np.in1d(iwalker, strays)]
+    if len(strays)>=0.33*nwalkers:
+        keep = iwalker
+
+
+#    afrac, logli = afrac[burnin/10:,:], logli[burnin/10:,:]
+#    params = params[burnin/10:,:,:]
+#    blobs = blobs[burnin/10:,:,:]
+    
+    if plot:
+#        from mpl_toolkits.axes_grid1 import make_axes_locatable
+        print("Making trace plots now.")
+        fig = plt.figure(figsize=(16, 16))
+        for ii in range(len(isonames)):
+            ax = fig.add_subplot(int(len(isonames)/2)+1, 2, ii+1)
+            ax.plot(params[:, keep, ii])
+            ax.plot(np.nanmean(params[:,keep,ii].T, axis=0), 'k-', lw=2, alpha=0.2)
+            if len(strays)>0:
+                ax.plot(params[:, strays, ii], alpha=0.5, linestyle='--')
+            ax.plot([burnin, burnin], plt.ylim(), 'y-', lw=2.0)
+            ax.set_xlabel('N/10 iteration')
+            ax.set_ylabel(isonames[ii])
+            divider = make_axes_locatable(ax)
+            axhist = divider.append_axes("right", size=1.2, pad=0.1, sharey=ax)
+            axhist.hist(params[:,keep,ii], 100, histtype='step', alpha=0.6, normed=True,
+                        orientation='horizontal')
+            axhist.hist(params[:,keep,ii].ravel(), 100, histtype='step', color='k',
+                        normed=True, orientation='horizontal')
+            plt.setp(axhist.get_yticklabels(), visible=False)
+        ax = fig.add_subplot(int(len(isonames)/2)+1, 2, len(isonames)+1)
+        ax.plot(logli)
+        ax.axvline(burnin, color='y', lw=2.0)
+        ax.set_xlabel('N/10 iteration')
+        ax.set_ylabel('logL')
+        plt.suptitle("KIC {} Parameter Trace".format(keblat.kic))
+        plt.savefig(header+footer+'_parameters.png')
+
+        print("Making ml sed+lc plot now.")
+        if len(mlpars) == 8:
+            iso_pars = mlpars.copy()
+            iso_pars[-1] = np.exp(iso_pars[-1])
+            keblat.plot_sed(iso_pars, header+footer, suffix='', savefig=True)
+        elif len(mlpars) == 14:
+            keblat.plot_lc(mlpars, header+footer, suffix='', savefig=True, polyorder=2)
+        elif len(mlpars) == 18:
+            if blob_names is None:
+                ll = keblat.lnlike(mlpars, qua=np.unique(keblat.quarter), crowd_fit=mlcrowd)
+            keblat.plot_sedlc(mlpars, header+footer, suffix='', savefig=True, polyorder=2)
+        elif len(mlpars) >=19:
+            mlpars_sedlc = mlpars[:18]
+            keblat.pars['sigma_ebv'] = mlpars[18]
+            if ndim>19:
+                keblat.pars['sigma_d'] = mlpars[19]
+            #mlpars_sedlc = np.append(mlpars_sedlc, mlpars[-1])
+            keblat.plot_sedlc(mlpars_sedlc, header+footer, suffix='', savefig=True, polyorder=2)
+#        elif len(mlpars) == 18+len(np.unique(keblat.quarter)):
+#            mlpars_sedlc = mlpars[:18]
+#            mlpars_crowd = mlpars[18:]
+#            ll = keblat.lnlike(mlpars_sedlc, qua=np.unique(keblat.quarter), 
+#                               crowd_fit=mlpars_crowd)
+#            keblat.plot_sedlc(mlpars_sedlc, header+footer, suffix='', savefig=True, polyorder=2)
+        else:
+            print "Not recognized mcmc run"
+
     bfpars = map(lambda v: (v[1], v[2]-v[1], v[1]-v[0]),
-                 zip(*np.nanpercentile(params[:,keep,:].reshape((-1, ndim)),
+                 zip(*np.nanpercentile(params[burnin:,keep,:].reshape((-1, ndim)),
+                                    [16, 50, 84], axis=0)))
+    try:
+        blobpars = map(lambda v: (v[1], v[2]-v[1], v[1]-v[0]),
+                   zip(*np.nanpercentile(blobs[burnin:,keep,:].reshape((-1, len(blob_names))),
+                                      [16, 50, 84], axis=0)))
+    except:
+        print("No blobs.")
+    print "MCMC result: "
+    print "Accep. Frac = ", np.nanmean(afrac[burnin:, keep])
+    for kk in range(len(isonames)):
+        print("""{0} = {1[0]} +{1[1]} -{1[2]}""".format(str(isonames[kk]),
+              bfpars[kk]))
+    for kk in range(len(blob_names)):
+        print("""{0} = {1[0]} +{1[1]} -{1[2]}""".format(str(blob_names[kk]),
+              blobpars[kk]))
+    # mostlike = np.where(logli[:,keep] == np.max(logli[:,keep]))
+    # mlpars = params[:,keep,:][mostlike][0]
+    # print "Max likelihood: ", logli[:,keep][mostlike]
+    # for kk in range(len(isonames)):
+    #     print("""{0} = {1}""".format(str(isonames[kk]), mlpars[kk]))
+    if write_mc:
+#        _mlpars = mlpars.copy()
+#        _mlpars[[4,16,17]][_mlpars[[4,16,17]]<0] = np.exp(_mlpars[[4,16,17]][_mlpars[[4,16,17]]<0])
+        residuals = abs(keblat.lnlike(mlpars[:18], lc_constraints=None, 
+                              qua=np.unique(keblat.quarter), polyorder=2, residual=True))
+
+        changeofvar_names = ['m1', 'm2', 'inc', 'e']
+        params_changeofvar = np.zeros((params.shape[0], params.shape[1], len(changeofvar_names)))
+        params_changeofvar[:,:,0], params_changeofvar[:,:,1] = keblat.sumrat_to_12(params[:,:,0], params[:,:,1])
+        params_changeofvar[:,:,2] = keblat.get_inc(params[:,:,11], blobs[:,:,0], keblat.get_a(params[:,:,7], params[:,:,0]))
+        params_changeofvar[:,:,3] = np.sqrt(params[:,:,9]**2 + params[:,:,10]**2)
+        bfpars_changeofvar = map(lambda v: (v[1], v[2]-v[1], v[1]-v[0]),
+                     zip(*np.nanpercentile(params_changeofvar[burnin:, keep, :].reshape((-1, len(changeofvar_names))),
+                                        [16, 50, 84], axis=0)))
+        
+        bffile = open(header+footer+'.mcpars', "w")
+        mlpars_write = mlpars.copy()
+        if len(mlpars)==19:
+            mlpars_write = np.append(mlpars_write, 0.0)
+        bffile.write("""{} {}\n""".format(" ".join([str(mp) for mp in mlpars_write]), " ".join([str(bp) for bp in keblat.get_blobs()])))
+        for kk in range(len(isonames)):
+    #        print("""{0} = {1[0]} +{1[1]} -{1[2]}""".format(str(isonames[kk]),
+    #              bfpars[kk]))
+            bffile.write("""#{0} = {1[0]} +{1[1]} -{1[2]}\n""".format(str(isonames[kk]),
+                  bfpars[kk]))
+        for kk in range(len(blob_names)):
+    #        print("""{0} = {1[0]} +{1[1]} -{1[2]}""".format(str(blob_names[kk]),
+    #              blobpars[kk]))
+            bffile.write("""#{0} = {1[0]} +{1[1]} -{1[2]}\n""".format(str(blob_names[kk]),
+                  blobpars[kk]))
+        for kk in range(len(changeofvar_names)):
+    #        print("""{0} = {1[0]} +{1[1]} -{1[2]}""".format(str(changeofvar_names[kk]),
+    #              bfpars_changeofvar[kk]))
+            bffile.write("""#{0} = {1[0]} +{1[1]} -{1[2]}\n""".format(str(changeofvar_names[kk]),
+                  bfpars_changeofvar[kk]))
+        bffile.close()
+
+        ##### making median residuals output ######
+        chunks = identify_gaps(keblat.cadnum, retbounds_inds=True)
+        chunks = np.delete(chunks, np.where(np.diff(chunks)<2)[0])
+        x = keblat.jd.copy()
+        y = keblat.flux.copy()
+        x[keblat.clip] = np.nan
+        y[keblat.clip] = np.nan
+        flckr = np.zeros((len(chunks)-2))
+        for ii in range(len(chunks)-2):                                  
+            _smoo, _flick = get_flicker(y[chunks[ii]:chunks[ii+1]], mad=False, window=24)
+            flckr[ii] = _flick  
+        residuals *= np.concatenate((np.sqrt(keblat.emagsobs**2+mlpars[:18][-1]**2), 
+                                     np.sqrt(keblat.fluxerr[keblat.clip]**2+mlpars[:18][-2]**2)))
+    
+        sed_res = np.nanpercentile(residuals[:len(keblat.magsobs)], [16, 50, 84])
+    
+        lcmod, lcpol = keblat.lcfit(keblat.getpars('lc')[:13], keblat.jd[keblat.clip], keblat.quarter[keblat.clip], 
+                                 keblat.flux[keblat.clip], keblat.dflux[keblat.clip], keblat.crowd[keblat.clip], 
+                                 polyorder=2)
+        eclipse = (lcmod<1)
+        ooe = abs(keblat.flux[keblat.clip][~eclipse] - lcmod[~eclipse]*lcpol[~eclipse])
+        ine = abs(keblat.flux[keblat.clip][eclipse] - lcmod[eclipse]*lcpol[eclipse])
+        ooe_res = np.nanpercentile(ooe, [16, 50, 84])
+        ine_res = np.nanpercentile(ine, [16, 50, 84])
+        mrfile = open(header+footer+'.medres', 'w')
+        mrfile.write("{} {} {} {} {} {}".format(keblat.kic, " ".join([str(zz) for zz in ine_res]), 
+               " ".join([str(zz) for zz in ooe_res]), 
+               " ".join([str(zz) for zz in sed_res]), np.nanmedian(abs(np.diff(keblat.flux[~keblat.clip]))), 
+               np.nanmedian(flckr)))
+        mrfile.close()
+
+    if posteriors:
+        import corner
+        plt.figure(figsize=(16, 16))
+        thin_by = np.clip((params.shape[0]-burnin)*params.shape[1]/50000, 1, 50000)
+        print("burned-in param matrix is {}; thinning by {}".format(params[burnin:, :, :].shape, thin_by))
+#        samples = np.concatenate((params[burnin/10::thin_by, :, :], blobs[burnin/10::thin_by, :, :]), axis=2)
+#        post_inds = np.arange(len(isonames)+len(blob_names))
+#        post_inds = np.delete(post_inds, np.where(np.std(samples, axis=(0,1)) == 0)[0])
+#        try:
+#            corner.corner(samples[:,keep,:][:,:,post_inds].reshape((-1, len(post_inds))), 
+#                          labels=np.append(isonames, blob_names)[post_inds], quantiles=[0.16, 0.5, 0.84],
+#                          show_titles=True, title_kwargs={"fontsize": 11})
+#            plt.savefig(header+footer+'_posteriors.png')
+        post_inds = np.arange(len(isonames))
+        post_inds = np.delete(post_inds, 
+                              np.where(np.nanmedian(abs(np.diff(params[burnin::thin_by, :, :], axis=0)), axis=(0,1)) < 1e-12)[0])
+        try:
+            corner.corner(params[burnin::thin_by, keep, :][:,:,post_inds].reshape((-1, len(post_inds))), 
+                          labels=np.array(isonames)[post_inds], quantiles=[0.16, 0.5, 0.84],
+                          show_titles=True, title_kwargs={"fontsize": 11})
+            plt.suptitle("KIC {}".format(keblat.kic))
+            plt.savefig(header+footer+'_posteriors.png')
+        except Exception, e:
+            print(str(e), post_inds)
+    tau = np.zeros((ndim))
+#    tau = np.zeros((ndim, nwalkers))
+    if acf:
+        print "Making ACF plots now."
+        fig = plt.figure(figsize=(16, 16))
+        fig.subplots_adjust(hspace=0.0)
+        x = np.arange(params.shape[0])
+        for ii in range(ndim):
+            ax = fig.add_subplot(ndim/3+1, 3, ii+1)            
+
+#            try:
+#                tau[ii] = autoc.integrated_time(np.nanmean(params[:,keep,ii].T, 
+#                   axis=0), axis=0, low=1, high=None, step=1, c=1, fast=False)
+#            except:
+#                print("Autocorr time could not be computed for {}".format(isonames[ii]))
+#            for jj in range(nwalkers):
+#                acf = autocorr(params[:,jj,ii]-np.nanmedian(params[:,jj,ii]))
+#                acf /= np.nanmax(acf)
+#                ax.plot(acf, alpha=0.5)
+            print("{}".format(isonames[ii]))
+            tau[ii], mean_of_acfs, acf = get_acf_tau(params[:, keep, ii], c=c)
+            ax.plot(acf, alpha=0.5)
+            ax.plot(mean_of_acfs, 'k-', lw=1.5, alpha=0.8, label='mean(acfs)')
+
+#            mean_chain = np.nanmean(params[:,keep,ii].T, axis=0)
+#            acf_of_mean = autocorr(mean_chain-np.nanmedian(mean_chain))
+#            acf_of_mean /= np.nanmax(acf_of_mean)
+#            ax.plot(acf_of_mean, 'k--', lw=1.5, alpha=0.8, label='acf(mean chain)')
+            ax.text(tau[ii]*1.1, 0.8, '{}'.format(int(tau[ii])))
+            ax.plot(x, np.exp(-x/tau[ii]), '-', lw=1.5, alpha=0.8)
+            ax.set_xlabel('N/10 iteration lag')
+            ax.set_ylabel('{}'.format(isonames[ii]))
+#            if ii == ndim-1:
+#                plt.legend()
+
+#                ax.plot([burnin/10, burnin/10], plt.ylim(), 'y-', lw=2.0)
+#                ax.set_xlabel('N/10 iteration')
+#                ax.set_ylabel(isonames[ii])
+#                divider = make_axes_locatable(ax)
+#                axhist = divider.append_axes("right", size=1.2, pad=0.1, sharey=ax)
+#                axhist.hist(params[:,:,ii], 100, histtype='step', alpha=0.6, normed=True,
+#                            orientation='horizontal')
+#                axhist.hist(params[:,:,ii].ravel(), 100, histtype='step', color='k',
+#                            normed=True, orientation='horizontal')
+#                plt.setp(axhist.get_yticklabels(), visible=False)
+        plt.suptitle("KIC {} ACF".format(keblat.kic))
+        plt.savefig(header+footer+'_ACF.png')
+    return bad_walkers, params, blobs, mlpars, tau, afrac, logli
+
+def plot_mc_pandas(filename, keblat, header, footer, nwalkers, ndim, niter, 
+            burnin=40000, plot=True, posteriors=False, huber_truths=[],
+            isonames=None, iso_extras=False, blob_names=None, acf=True, write_mc=False):
+    iwalker = np.arange(nwalkers)
+    if blob_names is None:
+        blob_names = ['r1', 'r2', 'frat'] + ['cr'+str(crq) for crq in np.unique(keblat.quarter)]
+
+    data = pd.read_csv(filename, delim_whitespace=True, header=None, 
+                       names=['iter', 'iwalker', 'accep_frac', 'logli']+isonames+blob_names)
+
+    afrac = np.empty((data.shape[0]/nwalkers, nwalkers))
+    logli = afrac*0.
+    params = np.empty((data.shape[0]/nwalkers, nwalkers, len(isonames)))
+    blobs = np.empty((data.shape[0]/nwalkers, nwalkers, len(blob_names)))
+#    strays = []
+    for jj in iwalker:
+        afrac[:,jj] = data['accep_frac'].values[jj::nwalkers]
+        logli[:,jj] = data['logli'].values[jj::nwalkers]
+        for ii in range(len(blob_names)):
+            blobs[:,jj,ii] = data[blob_names[ii]].values[jj::nwalkers]
+#        if len(afrac[:,jj][(afrac[:,jj]<0.1)])>=0.66*len(afrac[:,jj]):
+#            strays.append(jj)
+
+        for ii in range(len(isonames)):
+            params[:, jj, ii] = data[isonames[ii]].values[jj::nwalkers]
+#    params0 = params.copy()
+
+    mostlike = np.where(data['logli'].values == np.nanmax(data['logli']))[0]
+    mlpars = data[isonames].values[mostlike][0]
+    mlcrowd = data[blob_names].values[mostlike][0]
+    print "Max likelihood out of all samples: ", data['logli'].values[mostlike]
+    for kk in range(len(isonames)):
+        print("""{0} = {1}""".format(str(isonames[kk]), mlpars[kk]))
+    if burnin/10>=params.shape[0]:
+        print "Burn-in shorter than length of MCMC run, adjusting..."
+        burnin = params.shape[0]*3/4*10
+        
+        
+    _, bad_walkers, walker_percentiles = get_stray_walkers(data[isonames].values.reshape((-1, nwalkers, ndim)), nwalkers, ndim, burnin=burnin/10)
+    strays = iwalker[bad_walkers>1]
+    print("{} bad/stray walkers = {}".format(len(strays), strays))
+    
+    keep = iwalker[~np.in1d(iwalker, strays)]
+    if len(strays)>=0.33*nwalkers:
+        keep = iwalker
+
+
+#    afrac, logli = afrac[burnin/10:,:], logli[burnin/10:,:]
+#    params = params[burnin/10:,:,:]
+#    blobs = blobs[burnin/10:,:,:]
+    
+    if plot:
+#        from mpl_toolkits.axes_grid1 import make_axes_locatable
+        print "Making plots now."
+        fig = plt.figure(figsize=(16, 16))
+        for ii in range(len(isonames)):
+            ax = fig.add_subplot(int(len(isonames)/2)+1, 2, ii+1)
+            ax.plot(data[isonames[ii]].values.reshape((-1, nwalkers)))
+            #ax.plot(np.nanmean(params[:,:,ii].T, axis=0), 'k-', lw=2, alpha=0.2)
+            ax.plot([burnin/10, burnin/10], plt.ylim(), 'y-', lw=2.0)
+            ax.set_xlabel('N/10 iteration')
+            ax.set_ylabel(isonames[ii])
+            divider = make_axes_locatable(ax)
+            axhist = divider.append_axes("right", size=1.2, pad=0.1, sharey=ax)
+            axhist.hist(data[isonames[ii]].values.reshape((-1, nwalkers)), 100, histtype='step', alpha=0.6, normed=True,
+                        orientation='horizontal')
+            axhist.hist(data[isonames[ii]].values, 100, histtype='step', color='k',
+                        normed=True, orientation='horizontal')
+            plt.setp(axhist.get_yticklabels(), visible=False)
+        plt.savefig(header+footer+'_parameters.png')
+
+
+    bfpars = map(lambda v: (v[1], v[2]-v[1], v[1]-v[0]),
+                 zip(*np.nanpercentile(data[isonames].values.reshape((-1, nwalkers, ndim))[burnin/10:,keep,:].reshape((-1, ndim)),
                                     [16, 50, 84], axis=0)))
     blobpars = map(lambda v: (v[1], v[2]-v[1], v[1]-v[0]),
-                   zip(*np.nanpercentile(blobs[:,keep,:].reshape((-1, len(blob_names))),
+                   zip(*np.nanpercentile(data[blob_names].values.reshape((-1, nwalkers, len(blob_names)))[burnin/10:,keep,:].reshape((-1, len(blob_names))),
                                       [16, 50, 84], axis=0)))
     print "MCMC result: "
-    print "Accep. Frac = ", np.mean(afrac[:, keep])
+    print "Accep. Frac = ", np.nanmean(data['accept_frac'].values.reshape((-1, nwalkers))[burnin/10:, keep])
     for kk in range(len(isonames)):
         print("""{0} = {1[0]} +{1[1]} -{1[2]}""".format(str(isonames[kk]),
               bfpars[kk]))
@@ -1602,8 +2049,8 @@ def plot_mc(filename, keblat, header, footer, nwalkers, ndim, niter,
     #     print("""{0} = {1}""".format(str(isonames[kk]), mlpars[kk]))
     if write_mc:
         _mlpars = mlpars.copy()
-        _mlpars[[-1,4,16]][_mlpars[[-1,4,16]]<0] = np.exp(_mlpars[[-1,4,16]][_mlpars[[-1,4,16]]<0])
-        _ = keblat.lnlike(_mlpars, lc_constraints=None, qua=np.unique(keblat.quarter), residual=False)
+        _mlpars[[4,16,17]][_mlpars[[4,16,17]]<0] = np.exp(_mlpars[[4,16,17]][_mlpars[[4,16,17]]<0])
+        _ = keblat.lnlike(_mlpars[:18], lc_constraints=None, qua=np.unique(keblat.quarter), residual=False)
     
         changeofvar_names = ['m1', 'm2', 'inc', 'e']
         params_changeofvar = np.zeros((params.shape[0], params.shape[1], len(changeofvar_names)))
@@ -1611,7 +2058,7 @@ def plot_mc(filename, keblat, header, footer, nwalkers, ndim, niter,
         params_changeofvar[:,:,2] = keblat.get_inc(params[:,:,11], blobs[:,:,0]+blobs[:,:,1], keblat.get_a(params[:,:,7], params[:,:,0]))
         params_changeofvar[:,:,3] = np.sqrt(params[:,:,9]**2 + params[:,:,10]**2)
         bfpars_changeofvar = map(lambda v: (v[1], v[2]-v[1], v[1]-v[0]),
-                     zip(*np.percentile(params_changeofvar.reshape((-1, len(changeofvar_names))),
+                     zip(*np.percentile(params_changeofvar[burnin/10:, keep, :].reshape((-1, len(changeofvar_names))),
                                         [16, 50, 84], axis=0)))
         
         bffile = open(header+footer+'.mcpars', "w")
@@ -1646,8 +2093,10 @@ def plot_mc(filename, keblat, header, footer, nwalkers, ndim, niter,
                 ll = keblat.lnlike(mlpars, qua=np.unique(keblat.quarter), crowd_fit=mlcrowd)
             keblat.plot_sedlc(mlpars, header+footer, suffix='', savefig=True, polyorder=2)
         elif len(mlpars) == 20:
-            mlpars_sedlc = mlpars[:-3]
-            mlpars_sedlc = np.append(mlpars_sedlc, mlpars[-1])
+            mlpars_sedlc = mlpars[:18]
+            keblat.pars['sigma_ebv'] = mlpars[18]
+            keblat.pars['sigma_d'] = mlpars[19]
+            #mlpars_sedlc = np.append(mlpars_sedlc, mlpars[-1])
             keblat.plot_sedlc(mlpars_sedlc, header+footer, suffix='', savefig=True, polyorder=2)
 #        elif len(mlpars) == 18+len(np.unique(keblat.quarter)):
 #            mlpars_sedlc = mlpars[:18]
@@ -1659,47 +2108,54 @@ def plot_mc(filename, keblat, header, footer, nwalkers, ndim, niter,
             print "Not recognized mcmc run"
     if posteriors:
         import corner
-#        plt.figure(figsize=(14, 14))
-#        samples = np.concatenate((params[:, :, :], ((r1 + temp1) / (params[:,:,0]+params[:,:,0])**(1./3.))[:,:,np.newaxis],
-#                              (temp1/r1)[:,:,np.newaxis], logg1[:,:,np.newaxis]), axis=2)
-#        if iso_extras:
-#            isonames = isonames + ['rsum', 'rrat', 'frat']
-#        if len(huber_truths) != len(isonames):
-#            huber_truths = [None] * len(isonames)
-        samples = np.concatenate((params, blobs), axis=2)
-        post_inds = np.arange(len(isonames)+len(blob_names))
-        post_inds = np.delete(post_inds, np.where(np.std(samples, axis=(0,1)) == 0)[0])
+        plt.figure(figsize=(16, 16))
+        thin_by = np.clip((params.shape[0]-burnin/10)*params.shape[1]/50000, 1, 50000)
+        print("burned-in param matrix is {}; thinning by {}".format(params[burnin/10:, :, :].shape, thin_by))
+#        samples = np.concatenate((params[burnin/10::thin_by, :, :], blobs[burnin/10::thin_by, :, :]), axis=2)
+#        post_inds = np.arange(len(isonames)+len(blob_names))
+#        post_inds = np.delete(post_inds, np.where(np.std(samples, axis=(0,1)) == 0)[0])
+#        try:
+#            corner.corner(samples[:,keep,:][:,:,post_inds].reshape((-1, len(post_inds))), 
+#                          labels=np.append(isonames, blob_names)[post_inds], quantiles=[0.16, 0.5, 0.84],
+#                          show_titles=True, title_kwargs={"fontsize": 11})
+#            plt.savefig(header+footer+'_posteriors.png')
+        post_inds = np.arange(len(isonames))
+        post_inds = np.delete(post_inds, np.where(np.nanstd(params[burnin/10::thin_by, :, :], axis=(0,1)) == 0)[0])
         try:
-#            corner.corner(samples[:, keep,:][:,:,post_inds].reshape((-1, len(post_inds))),
-#                            labels=np.array(isonames)[post_inds], truths=np.array(huber_truths)[post_inds], truth_color='red')
-            corner.corner(samples[:,keep,:][:,:,post_inds].reshape((-1, len(post_inds))), 
-                          labels=np.append(isonames, blob_names)[post_inds], quantiles=[0.16, 0.5, 0.84],
+            corner.corner(params[burnin/10::thin_by, keep, :][:,:,post_inds].reshape((-1, len(post_inds))), 
+                          labels=isonames[post_inds], quantiles=[0.16, 0.5, 0.84],
                           show_titles=True, title_kwargs={"fontsize": 11})
             plt.savefig(header+footer+'_posteriors.png')
         except Exception, e:
             print str(e)
-#    return params, r1, temp1, logg1, mlpars, True
-    tau = np.zeros(ndim)
+    tau = np.zeros((ndim))
+#    tau = np.zeros((ndim, nwalkers))
     if acf:
         print "Making ACF plots now."
         fig = plt.figure(figsize=(16, 16))
         fig.subplots_adjust(hspace=0.0)
-        x = np.arange(params0.shape[0])
+        x = np.arange(params.shape[0])
         for ii in range(ndim):
-            try:
-                tau[ii] = autoc.integrated_time(np.nanmean(params0[:,:,ii].T, axis=0), axis=0, low=1, high=None, step=1, c=1, fast=False)
-            except:
-                print("Autocorr time could not be computed for {}".format(parnames_dict['lcsed'][ii]))
             ax = fig.add_subplot(ndim/3+1, 3, ii+1)            
-            for jj in range(nwalkers):
-                acf = autocorr(params0[:,jj,ii]-np.nanmedian(params0[:,jj,ii]))
-                acf /= np.nanmax(acf)
-                ax.plot(acf, alpha=0.5)
-            
-            mean_chain = np.nanmean(params0[:,:,ii].T, axis=0)
-            acf = autocorr(mean_chain-np.nanmedian(mean_chain))
-            acf /= np.nanmax(acf)
-            ax.plot(acf, 'k-', lw=1.5, alpha=0.8, label='mean chain')
+
+#            try:
+#                tau[ii] = autoc.integrated_time(np.nanmean(params[:,keep,ii].T, 
+#                   axis=0), axis=0, low=1, high=None, step=1, c=1, fast=False)
+#            except:
+#                print("Autocorr time could not be computed for {}".format(isonames[ii]))
+#            for jj in range(nwalkers):
+#                acf = autocorr(params[:,jj,ii]-np.nanmedian(params[:,jj,ii]))
+#                acf /= np.nanmax(acf)
+#                ax.plot(acf, alpha=0.5)
+            print("{}".format(isonames[ii]))
+            tau[ii], mean_of_acfs, acf = get_acf_tau(params[:, keep, ii])
+            ax.plot(acf, alpha=0.5)
+            ax.plot(mean_of_acfs, 'k-', lw=1.5, alpha=0.8, label='mean(acfs)')
+
+#            mean_chain = np.nanmean(params[:,keep,ii].T, axis=0)
+#            acf_of_mean = autocorr(mean_chain-np.nanmedian(mean_chain))
+#            acf_of_mean /= np.nanmax(acf_of_mean)
+#            ax.plot(acf_of_mean, 'k--', lw=1.5, alpha=0.8, label='acf(mean chain)')
             ax.plot(x, np.exp(-x/tau[ii]), 'c-', lw=1.5, alpha=0.8, label='tau exp')
             ax.set_xlabel('N/10 iteration lag')
             ax.set_ylabel('{}'.format(isonames[ii]))
@@ -1718,7 +2174,83 @@ def plot_mc(filename, keblat, header, footer, nwalkers, ndim, niter,
 #                plt.setp(axhist.get_yticklabels(), visible=False)
         plt.suptitle("ACF")
         plt.savefig(header+footer+'_ACF.png')
-    return params0, params, blobs, mlpars, tau, np.mean(afrac[:, keep]), True
+    return bad_walkers, params, blobs, mlpars, tau, np.mean(afrac[:, keep]), True
+
+
+def auto_window(taus, c):
+    """
+    Find the smallest window such that m >= c * tau (Sokal 1989)   
+    
+    Function directly from dfm.io/posts/autocorr/"""
+    m = np.arange(len(taus)) < c * taus
+    if np.any(m):
+        return np.argmin(m)
+    return len(taus) - 1
+
+def get_acf_tau(y, c=7.0):
+    """
+    Find integrated autocorrelation time by taking the mean of ACFs 
+    of a 2d time series y[time, walker] (rather than taking the ACF of the 
+    mean of the time series)
+    
+    Adapted from dfm.io/posts/autocorr/
+    """
+    if np.nansum(y) == 0 or np.nanstd(y) < 1e-12:
+        print("Autocorr time could not be computed. Check your input.")
+        return 0, np.zeros(len(y)), np.zeros(len(y))
+    acf = y*0.
+    for ii in range(y.shape[1]):
+        acf[:,ii] = autocorr(y[:,ii] - np.nanmean(y[:,ii]))
+        acf[:,ii] /= acf[0,ii] #np.nanmax(acf[ii,:])
+    f = np.nansum(acf, axis=1) / y.shape[1]
+    taus = 2.0 * np.cumsum(f) - 1.0
+    window = auto_window(taus, c)
+    return taus[window], f, acf
+
+def get_stray_walkers(mcmcchains, nwalkers, ndim, burnin=0, threshold=10., bfpars=None):
+    iwalker=np.arange(nwalkers)
+    walker_percentiles = np.zeros((ndim, nwalkers, 5))
+    if bfpars is None:
+            bfpars = map(lambda v: (v[1], v[2]-v[1], v[1]-v[0]),
+                 zip(*np.nanpercentile(mcmcchains[burnin:,:,:].reshape((-1, ndim)),
+                                    [16, 50, 84], axis=0)))
+
+    bad_walkers = np.zeros(nwalkers)
+    for ii in range(ndim):
+        for jj in range(nwalkers):
+            walker_percentiles[ii,jj,:3] = np.nanpercentile(mcmcchains[burnin:, jj, ii], [16, 50, 84])
+            walker_percentiles[ii,jj,3] = np.nanmean(mcmcchains[burnin:, jj, ii])
+            walker_percentiles[ii,jj,4] = np.nanstd(mcmcchains[burnin:, jj, ii])
+#            print(np.nanpercentile(mcmcchains[burnin:, jj, ii], [16, 50, 84]))
+            bad_walkers[jj] += ((walker_percentiles[ii,jj,2]-walker_percentiles[ii,jj,1] < bfpars[ii][1]/threshold) * \
+                                (walker_percentiles[ii,jj,1]-walker_percentiles[ii,jj,0] < bfpars[ii][2]/threshold)) | \
+                               (abs(walker_percentiles[ii,jj,3] - bfpars[ii][0]) > threshold * bfpars[ii][1])
+    return iwalker, bad_walkers, walker_percentiles
+
+def write_sedlc_pars(keblat, opt_allpars, crowd, fname=None):
+    kepQs = np.arange(18)
+    crowd_vals = np.zeros(len(kepQs))
+    crowd_vals[np.in1d(kepQs, np.unique(keblat.quarter))] = crowd
+    _ = keblat.lnlike(opt_allpars[:18], qua=np.unique(keblat.quarter))
+    if fname is not None:
+        outf = open(fname, "w")
+        outf.write("""{0} {1} {2} {3} {4} {5} {6} {7} {8} {9} {10} {11} {12} {13}\n""".format(keblat.kic, keblat.morph, 
+                                                       " ".join(str(jj) for jj in opt_allpars),
+                                                        keblat.r1, keblat.r2, keblat.frat, 
+                                                        keblat.temp1, keblat.temp2, 
+                                                        keblat.logg1, keblat.logg2,
+                                                        keblat.pars['inc'], keblat.mact1, keblat.mact2,
+                                                        " ".join(str(zz) for zz in crowd_vals)))
+        outf.close()
+    else:
+        print("""{0} {1} {2} {3} {4} {5} {6} {7} {8} {9} {10} {11} {12} {13}\n""".format(keblat.kic, keblat.morph, 
+                                                   " ".join(str(jj) for jj in opt_allpars),
+                                                    keblat.r1, keblat.r2, keblat.frat, 
+                                                    keblat.temp1, keblat.temp2, 
+                                                    keblat.logg1, keblat.logg2,
+                                                    keblat.pars['inc'], keblat.mact1, keblat.mact2,
+                                                    " ".join(str(zz) for zz in crowd_vals)))
+    return
 
 def make_p0_ball(p_init, ndim, nwalkers, scale=1e-4, period_scale=1e-7, mass_scale=1e-4, age_scale=1e-5):
     p0_scale = np.ones(ndim)*scale
@@ -1730,7 +2262,10 @@ def make_p0_ball(p_init, ndim, nwalkers, scale=1e-4, period_scale=1e-7, mass_sca
 #    p0[:,6] = 119.
     #p0[:,16] = 1e-4
     p0[:,12:16] = np.clip(p0[:,12:16], 0., 1.0)
-    p0[:,18:] = np.clip(p0[:,18:], 0, 1)
+#    p0[:,18:] = np.clip(p0[:,18:], 0, 1)
+#    p0[:,18] = np.clip(p0[:,18], -12, 2)
+#    if ndim>19:
+#        p0[:,19] = np.clip(p0[:,19], -1, 7)
     return p0
 
 def estimate_tpe_sep(jd, flux, period):
