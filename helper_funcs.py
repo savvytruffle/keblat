@@ -486,7 +486,7 @@ def reinterpret_x_c(t, x, tbary):
     xshift[bad] = np.median(xshift[~bad])
     return xshift
 
-def user_rc(lw=1.5, fontsize=10):
+def user_rc(lw=1.5, fontsize=16, usetex=True):
     """Set plotting RC parameters"""
     # These are the "Tableau 20" colors as RGB.
     tableau20 = [(31, 119, 180), (174, 199, 232), (255, 127, 14), (255, 187, 120),
@@ -505,16 +505,54 @@ def user_rc(lw=1.5, fontsize=10):
     if matplotlib.__version__[0]=='2':
         from cycler import cycler
 #        plt.rc('axes', prop_cycle=cycler(c=tableau20), lw=1, labelsize=18, titlesize=22)
-        plt.rc('axes', lw=1, labelsize=18, titlesize=22)
+        plt.rc('axes', lw=lw, labelsize=fontsize, titlesize=22)
 
     else:
 #        plt.rc('axes', axes_cycle=tableau20, lw=1, labelsize=18, titlesize=22)
-        plt.rc('axes', lw=1, labelsize=18, titlesize=22)
+        plt.rc('axes', lw=lw, labelsize=fontsize, titlesize=22)
+    if usetex:
+        plt.rc('text', usetex=True)
+        plt.rc('font', **{'family': 'serif', 'serif': ['Computer Modern Roman', 'Times']})
+    else:
+        plt.rc('text', usetex=False)
+        plt.rc('font', **{'family': 'serif', 'serif': ['Ubuntu'], 'monospace': ['Ubuntu Mono']})#['Computer Modern']})
+    plt.rc('xtick', labelsize=max(15, int(fontsize*0.8)))
+    plt.rc('ytick', labelsize=max(15, int(fontsize*0.8)))
     plt.rc('figure', titlesize=22, figsize=(10,8))
+#    plt.tight_layout()
+#    plt.subplots_adjust(left=0.11, right=0.92, bottom=0.1)
+#    plt.rcParams['text.latex.preamble'] = [r'\boldmath']
     return
     #plt.rc('font', size=7)
 
+def adjacent_values(vals, q1, q3):
+    upper_adjacent_value = q3 + (q3 - q1) * 1.5
+    upper_adjacent_value = np.clip(upper_adjacent_value, q3, vals[-1])
 
+    lower_adjacent_value = q1 - (q3 - q1) * 1.5
+    lower_adjacent_value = np.clip(lower_adjacent_value, vals[0], q1)
+    return lower_adjacent_value, upper_adjacent_value
+
+def violin_whiskers_plot(x, y, ax, cvio=None, cwhis=None, w=0.5, alpha=0.9):
+    parts = ax.violinplot(y, x, showmeans=False, showmedians=False, showextrema=False,
+                          widths=w)
+    if cwhis is None:
+        cwhis="0.3"
+    if cvio is None:
+        cvio="0.7"
+    for pc in parts['bodies']:
+        pc.set_facecolor(cvio)
+        pc.set_edgecolor(cwhis)
+        pc.set_alpha(alpha)
+    quartile1, medians, quartile3 = np.zeros(len(x)), np.zeros(len(x)), np.zeros(len(x))
+    for ii in range(len(x)):
+        quartile1[ii], medians[ii], quartile3[ii] = np.nanpercentile(y[ii], [25, 50, 75])
+    whiskers = np.array([adjacent_values(np.sort(sorted_array), q1, q3) for sorted_array, q1, q3 in zip(y, quartile1, quartile3)])
+    whiskersMin, whiskersMax = whiskers[:,0], whiskers[:,1]
+    ax.scatter(x, medians, marker='o', color='white', s=10, zorder=3)
+    ax.vlines(x, quartile1, quartile3, color=cwhis, linestyle='-', lw=5)
+    ax.vlines(x, whiskersMin, whiskersMax, color=cwhis, linestyle='-', lw=1)
+    return whiskersMin, whiskersMax
 
 def get_excludelist(fname='data/sed_flag_file_0328'):
     # cols are kic#, ubv, sdss, wise, 2mass
@@ -646,6 +684,12 @@ def padcads(t0, cadnum0, f0, ef0, chunks, flagged, tolmin = 1, tolmax = 7, cad =
         ef = np.insert(ef, fillcad[ii]+1, ef_filler)
         cadnum = np.insert(cadnum, fillcad[ii]+1, (np.arange(nfillers-1)+1) + cadnum[fillcad[ii]])
     return t, cadnum, f, ef
+
+def get_sed_binary_mod(mags1, mags2):
+    return mags1-2.5*np.log10(1.+10**((mags1-mags2)/2.5))
+
+def get_sed_triple_mod(mags1, mags2, mags3):
+    return mags1-2.5*np.log10(1.+10**((mags2-mags1)/-2.5) + 10**((mags3-mags1)/-2.5))
 
 def roll_np(x, N, threshold=1.0):
     if threshold is None:
