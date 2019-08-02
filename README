@@ -1,10 +1,9 @@
-Keblat simultaneously fits multi-band (SED) and time-series (Kepler light curve) photometric data for an eclipsing binary from the Villanova KEB catalogue. It utilizes Padova isochrones (stored in data/) and the Mandel & Agol (2002) code in C. Requires the GNU Scientific Library (GSL) in C. 
+Keblat simultaneously fits multi-band (SED) and time-series (Kepler light curve) photometric data for an eclipsing binary from the Villanova KEB catalogue. It utilizes Padova isochrones (stored in data/) and the Mandel & Agol (2002) code in C, with rsky function adapted from L. Kreidberg. Requires the GNU Scientific Library (GSL) in C. 
+ 
+This repo contains the source code that produced the fits to the paper "Modeling Kepler Eclipsing Binaries: Homogeneous Inference of Orbital & Stellar Properties" by Windemuth et al. (2019). Plots of SED+LC fits from maximum-likelihood solutions can be found in data/plots/ml/, and corner plots of posterior distributions can be found in data/plots/posteriors/. Thinned versions of the MCMC files can be downloaded at https://zenodo.org/record/3357009
 
 You can install GSL by:
 - download v2.1 here: ftp://ftp.gnu.org/gnu/gsl/gsl-2.1.tar.gz
 - untar into desired directory
 - follow instructions in the INSTALL file; if you do not have root access, append --prefix=/path/to/dir during ./configure
 - to include GSL functions into your own code, make sure to link the library during compilation/in your makefile
- 
-
-This repo contains the source code that produced the fits to the paper "Modeling Kepler Eclipsing Binaries: Homogeneous Inference of Orbital & Stellar Properties" by Windemuth et al. (2019). Plots of SED+LC fits from maximum-likelihood solutions can be found in data/plots/ml/, and corner plots of posterior distributions can be found in data/plots/posteriors/. Thinned versions of the MCMC files can be downloaded at https://zenodo.org/record/3357009
