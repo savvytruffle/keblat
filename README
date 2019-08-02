@@ -7,4 +7,4 @@ You can install GSL by:
 - to include GSL functions into your own code, make sure to link the library during compilation/in your makefile
  
 
-This repo contains the source code that produced the fits to the paper "Modeling Kepler Eclipsing Binaries: Homogeneous Inference of Orbital & Stellar Properties" by Windemuth et al. (2019). Plots of fits from maximum-likelihood solutions can be found in data/mlplots/. Thinned versions of the MCMC files can be downloaded at https://zenodo.org/record/3357009
+This repo contains the source code that produced the fits to the paper "Modeling Kepler Eclipsing Binaries: Homogeneous Inference of Orbital & Stellar Properties" by Windemuth et al. (2019). Plots of SED+LC fits from maximum-likelihood solutions can be found in data/plots/ml/, and corner plots of posterior distributions can be found in data/plots/posteriors/. Thinned versions of the MCMC files can be downloaded at https://zenodo.org/record/3357009
